@@ -2257,7 +2257,10 @@ impl RootView {
                 // With old onboarding, we ask user to log in before onboarding, so don't do it after onboarding completes.
                 let requires_login = !is_logged_in
                     && (ai_enabled || warp_drive_enabled)
-                    && FeatureFlag::OpenWarpNewSettingsModes.is_enabled();
+                    && FeatureFlag::OpenWarpNewSettingsModes.is_enabled()
+                    // OSS builds with direct API mode don't require login —
+                    // users can connect to their own LLM provider without a Warp account.
+                    && warp_core::channel::ChannelState::channel() != warp_core::channel::Channel::Oss;
 
                 if requires_login {
                     let tutorial = OnboardingTutorial::from(selected_settings.clone());
