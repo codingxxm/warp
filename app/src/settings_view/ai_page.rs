@@ -6039,6 +6039,23 @@ impl DirectApiWidget {
                     });
                 }
             });
+            // Re-enable/disable model editor when DirectApiEnabled or IsAnyAIEnabled toggle changes
+            let model_editor_for_settings = model_editor.clone();
+            ctx.subscribe_to_model(&AISettings::handle(ctx), move |_, _, event, ctx| {
+                match event {
+                    AISettingsChangedEvent::DirectApiEnabled { .. }
+                    | AISettingsChangedEvent::IsAnyAIEnabled { .. } => {
+                        let is_any_ai_enabled = AISettings::as_ref(ctx).is_any_ai_enabled(ctx);
+                        let direct_api_enabled = *AISettings::as_ref(ctx).direct_api_enabled;
+                        AISettingsPageView::update_editor_interaction_state(
+                            model_editor_for_settings.clone(),
+                            is_any_ai_enabled && direct_api_enabled,
+                            ctx,
+                        );
+                    }
+                    _ => {}
+                }
+            });
         }
 
         Self {
