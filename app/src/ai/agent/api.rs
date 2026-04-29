@@ -1,6 +1,7 @@
 pub(crate) mod convert_conversation;
 mod convert_from;
 mod convert_to;
+mod direct_routing;
 mod r#impl;
 
 pub use ai::agent::convert::ConvertToAPITypeError;
@@ -33,6 +34,7 @@ use crate::ai::blocklist::{BlocklistAIPermissions, RequestInput};
 use crate::ai::mcp::templatable_manager::TemplatableMCPServerInfo;
 use crate::ai::mcp::TemplatableMCPServerManager;
 use crate::settings::AISettings;
+use settings::Setting;
 use crate::terminal::safe_mode_settings::get_secret_obfuscation_mode;
 use crate::workspaces::user_workspaces::UserWorkspaces;
 use warp_core::user_preferences::GetUserPreferences;
@@ -128,6 +130,9 @@ pub struct RequestParams {
     pub parent_agent_id: Option<String>,
     /// The display name for this agent (e.g. "Agent 1"), assigned by the orchestrator.
     pub agent_name: Option<String>,
+    /// Direct LLM provider config for OSS builds that bypass Warp's server.
+    /// When set, AI requests go directly to the configured provider.
+    pub direct_provider: Option<(direct_llm_client::types::ProviderType, direct_llm_client::types::ProviderConfig)>,
 }
 
 pub type Event = Result<warp_multi_agent_api::ResponseEvent, Arc<AIApiError>>;
@@ -279,6 +284,14 @@ impl RequestParams {
                 .as_ref()
                 .is_none_or(|t| matches!(t, crate::terminal::model::session::SessionType::Local));
 
+        let direct_provider = {
+            let direct_api_enabled = *ai_settings.direct_api_enabled;
+            let api_keys_struct = ApiKeyManager::as_ref(app).keys();
+            let model_str = ai_settings.direct_api_model.value();
+            let model: Option<&str> = if model_str.is_empty() { None } else { Some(model_str) };
+            direct_routing::should_route_direct(direct_api_enabled, api_keys_struct, model)
+        };
+
         Self {
             input: request_input.all_inputs().cloned().collect(),
             conversation_token: conversation.server_conversation_token,
@@ -309,6 +322,7 @@ impl RequestParams {
             supported_tools_override: request_input.supported_tools_override.clone(),
             parent_agent_id: None,
             agent_name: None,
+            direct_provider,
         }
     }
 }

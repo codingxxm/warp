@@ -26,6 +26,8 @@ fn main() -> Result<()> {
     if cfg!(debug_assertions) {
         state = state.with_additional_features(warp_core::features::DEBUG_FLAGS);
     }
+    // OSS builds unlock BYO API keys and AI key management without Warp account auth.
+    state = state.with_additional_features(warp_core::features::OSS_AI_FLAGS);
     ChannelState::set(state);
 
     warp::run()

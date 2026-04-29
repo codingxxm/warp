@@ -1,0 +1,19 @@
+[package]
+name = "direct_llm_client"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+warp_multi_agent_api = { workspace = true }
+reqwest = { workspace = true, features = ["stream", "json", "rustls-tls-native-roots-no-provider"] }
+reqwest-eventsource = { workspace = true }
+prost = { workspace = true }
+prost-types = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+futures = { workspace = true }
+tokio = { workspace = true, features = ["sync"] }
+thiserror = { workspace = true }
+base64 = { workspace = true }
+uuid = { workspace = true }

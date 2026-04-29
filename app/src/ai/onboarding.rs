@@ -64,7 +64,8 @@ pub fn apply_free_tier_default_model_override(
 
 pub fn current_onboarding_auth_state(ctx: &AppContext) -> OnboardingAuthState {
     let auth_state = AuthStateProvider::as_ref(ctx).get();
-    if auth_state.is_anonymous_or_logged_out() {
+    let is_oss = warp_core::channel::ChannelState::channel() == warp_core::channel::Channel::Oss;
+    if auth_state.is_anonymous_or_logged_out() && !is_oss {
         return OnboardingAuthState::LoggedOut;
     }
     let is_on_paid_plan = UserWorkspaces::as_ref(ctx)

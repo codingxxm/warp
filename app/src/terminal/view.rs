@@ -11830,6 +11830,7 @@ impl TerminalView {
 
         if self.auth_state.is_anonymous_or_logged_out()
             && !FeatureFlag::OpenWarpNewSettingsModes.is_enabled()
+            && warp_core::channel::ChannelState::channel() != warp_core::channel::Channel::Oss
         {
             self.insert_anonymous_user_ai_sign_up_banner(ctx);
         }
@@ -11921,9 +11922,10 @@ impl TerminalView {
         let auth_state = AuthStateProvider::as_ref(ctx).get();
         let is_onboarded = auth_state.is_onboarded().unwrap_or(true);
         let is_anonymous_or_logged_out = auth_state.is_anonymous_or_logged_out();
+        let is_oss = warp_core::channel::ChannelState::channel() == warp_core::channel::Channel::Oss;
         let should_show_onboarding = FeatureFlag::AgentOnboarding.is_enabled()
             && !is_onboarded
-            && !is_anonymous_or_logged_out;
+            && !(is_anonymous_or_logged_out && !is_oss);
         let is_launch_modal_open = OneTimeModalModel::as_ref(ctx).is_oz_launch_modal_open();
 
         let has_plugin_instructions_block = self.rich_content_views.iter().any(|rc| {
@@ -24776,13 +24778,14 @@ impl TypedActionView for TerminalView {
             }
             VimModeBanner(action) => self.handle_vim_banner_action(*action, ctx),
             OnboardingFlow(version) => {
-                // Don't show onboarding if it's already active or if this is a shared session or if user is anonymous
+                // Don't show onboarding if it's already active or if this is a shared session or if user is anonymous (OSS bypasses this)
+                let is_oss_onboarding = warp_core::channel::ChannelState::channel() == warp_core::channel::Channel::Oss;
                 if self
                     .model
                     .lock()
                     .shared_session_status()
                     .is_sharer_or_viewer()
-                    || self.auth_state.is_anonymous_or_logged_out()
+                    || (self.auth_state.is_anonymous_or_logged_out() && !is_oss_onboarding)
                 {
                     return;
                 };

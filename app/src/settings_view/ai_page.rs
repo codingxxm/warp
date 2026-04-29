@@ -1468,6 +1468,7 @@ impl AISettingsPageView {
                 }
                 widgets.push(Box::new(CLIAgentWidget::default()));
                 widgets.push(Box::new(ApiKeysWidget::new(ctx)));
+                widgets.push(Box::new(DirectApiWidget::new(ctx)));
                 widgets.push(Box::new(AwsBedrockWidget::new(ctx)));
                 widgets.push(Box::new(AgentAttributionWidget::default()));
                 widgets.push(Box::new(OtherAIWidget::default()));
@@ -1508,6 +1509,7 @@ impl AISettingsPageView {
                     widgets.push(Box::new(VoiceWidget::default()));
                 }
                 widgets.push(Box::new(ApiKeysWidget::new(ctx)));
+                widgets.push(Box::new(DirectApiWidget::new(ctx)));
                 widgets.push(Box::new(AwsBedrockWidget::new(ctx)));
                 widgets.push(Box::new(AgentAttributionWidget::default()));
                 widgets.push(Box::new(OtherAIWidget::default()));
@@ -2070,6 +2072,7 @@ pub enum AISettingsPageAction {
     ToggleUseAgentToolbar,
     ToggleVoiceInput,
     ToggleCanUseWarpCreditsWithByok,
+    ToggleDirectApi,
     HyperlinkClick(HyperlinkUrl),
     ToggleCodebaseContext,
     ToggleShowInputHintText,
@@ -2460,6 +2463,17 @@ impl TypedActionView for AISettingsPageView {
                         .can_use_warp_credits_with_byok
                         .toggle_and_save_value(ctx));
                 });
+                ctx.notify();
+            }
+            AISettingsPageAction::ToggleDirectApi => {
+                match AISettings::handle(ctx).update(ctx, |settings, ctx| {
+                    settings.direct_api_enabled.toggle_and_save_value(ctx)
+                }) {
+                    Ok(_) => {}
+                    Err(e) => {
+                        log::warn!("Failed to set value for Direct API setting: {e:?}");
+                    }
+                }
                 ctx.notify();
             }
             AISettingsPageAction::HyperlinkClick(hyperlink) => {
@@ -3116,8 +3130,9 @@ impl SettingsWidget for GlobalAIWidget {
             );
         }
 
-        // Show sign-up button for anonymous users, toggle for logged-in users
-        if is_anonymous {
+        // Show sign-up button for anonymous users on non-OSS channels, toggle for logged-in users (or OSS)
+        let is_oss = warp_core::channel::ChannelState::channel() == warp_core::channel::Channel::Oss;
+        if is_anonymous && !is_oss {
             row.add_child(
                 Flex::row()
                     .with_cross_axis_alignment(CrossAxisAlignment::Center)
@@ -3454,9 +3469,11 @@ impl SettingsWidget for UsageWidget {
         )
         .with_hyperlink_font_color(appearance.theme().accent().into_solid());
 
+        let is_oss_usage = warp_core::channel::ChannelState::channel() == warp_core::channel::Channel::Oss;
         if AuthStateProvider::as_ref(app)
             .get()
             .is_anonymous_or_logged_out()
+            && !is_oss_usage
         {
             upgrade_cta = upgrade_cta.register_default_click_handlers(|_, ctx, _| {
                 ctx.dispatch_typed_action(AISettingsPageAction::AttemptLoginGatedUpgrade);
@@ -5964,13 +5981,197 @@ impl SettingsWidget for CloudAgentComputerUseWidget {
     }
 }
 
+// --- Direct API Mode Widget (OSS builds only) ---
+struct DirectApiWidget {
+    direct_api_toggle: SwitchStateHandle,
+    model_editor: ViewHandle<EditorView>,
+    is_oss: bool,
+}
+
+impl DirectApiWidget {
+    fn new(ctx: &mut ViewContext<<Self as SettingsWidget>::View>) -> Self {
+        let is_oss = warp_core::channel::ChannelState::channel() == warp_core::channel::Channel::Oss;
+        let ai_settings = AISettings::as_ref(ctx);
+        let is_any_ai_enabled = ai_settings.is_any_ai_enabled(ctx);
+        let direct_api_enabled = *ai_settings.direct_api_enabled;
+
+        let model_text = if is_oss {
+            ai_settings.direct_api_model.value().clone()
+        } else {
+            String::new()
+        };
+
+        let model_editor = ctx.add_typed_action_view(move |ctx| {
+            let appearance = Appearance::handle(ctx).as_ref(ctx);
+            let options = SingleLineEditorOptions {
+                is_password: false,
+                text: TextOptions {
+                    font_size_override: Some(appearance.ui_font_size()),
+                    font_family_override: Some(appearance.monospace_font_family()),
+                    text_colors_override: Some(TextColors {
+                        default_color: appearance.theme().active_ui_text_color(),
+                        disabled_color: appearance.theme().disabled_ui_text_color(),
+                        hint_color: appearance.theme().disabled_ui_text_color(),
+                    }),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let mut editor = EditorView::single_line(options, ctx);
+            editor.set_placeholder_text("e.g. gpt-4o, claude-sonnet-4-20250514", ctx);
+            if is_oss && !model_text.is_empty() {
+                editor.set_buffer_text(&model_text, ctx);
+            }
+            editor
+        });
+
+        if is_oss {
+            AISettingsPageView::update_editor_interaction_state(
+                model_editor.clone(),
+                is_any_ai_enabled && direct_api_enabled,
+                ctx,
+            );
+            ctx.subscribe_to_view(&model_editor, |_, editor, event, ctx| {
+                if matches!(event, EditorEvent::Blurred | EditorEvent::Enter) {
+                    let buffer_text = editor.as_ref(ctx).buffer_text(ctx);
+                    AISettings::handle(ctx).update(ctx, |settings, ctx| {
+                        report_if_error!(settings.direct_api_model.set_value(buffer_text, ctx));
+                    });
+                }
+            });
+        }
+
+        Self {
+            direct_api_toggle: Default::default(),
+            model_editor,
+            is_oss,
+        }
+    }
+}
+
+impl SettingsWidget for DirectApiWidget {
+    type View = AISettingsPageView;
+
+    fn search_terms(&self) -> &str {
+        "direct api mode provider model llm openai anthropic custom url"
+    }
+
+    fn render(
+        &self,
+        _view: &Self::View,
+        appearance: &Appearance,
+        app: &AppContext,
+    ) -> Box<dyn Element> {
+        if !self.is_oss {
+            return Container::new(Flex::column().finish()).finish();
+        }
+
+        let ai_settings = AISettings::as_ref(app);
+        let is_any_ai_enabled = ai_settings.is_any_ai_enabled(app);
+        let direct_api_enabled = *ai_settings.direct_api_enabled;
+
+        let ui_builder = appearance.ui_builder();
+
+        // Toggle row: "Direct API Mode" label + switch
+        let toggle_row = Flex::row()
+            .with_main_axis_size(MainAxisSize::Max)
+            .with_main_axis_alignment(MainAxisAlignment::SpaceBetween)
+            .with_cross_axis_alignment(CrossAxisAlignment::Center)
+            .with_child(
+                Text::new_inline("Direct API Mode", appearance.ui_font_family(), CONTENT_FONT_SIZE)
+                    .with_color(styles::header_font_color(is_any_ai_enabled, app).into())
+                    .finish(),
+            )
+            .with_child(
+                Container::new(
+                    ui_builder
+                        .switch(self.direct_api_toggle.clone())
+                        .check(direct_api_enabled)
+                        .build()
+                        .on_click(move |ctx, _, _| {
+                            ctx.dispatch_typed_action(AISettingsPageAction::ToggleDirectApi);
+                        })
+                        .finish(),
+                )
+                .with_padding_right(TOGGLE_BUTTON_RIGHT_PADDING)
+                .finish(),
+            )
+            .finish();
+
+        let mut column = Flex::column()
+            .with_spacing(16.)
+            .with_child(render_separator(appearance))
+            .with_child(
+                build_sub_header(
+                    appearance,
+                    "Direct API Mode",
+                    Some(styles::header_font_color(is_any_ai_enabled, app)),
+                )
+                .with_padding_bottom(HEADER_PADDING)
+                .finish(),
+            )
+            .with_child(toggle_row)
+            .with_child(
+                render_ai_setting_description(
+                    "When enabled, AI requests are sent directly to your configured provider instead of Warp's cloud server. Requires an API key and base URL to be configured in the API Keys section above.",
+                    is_any_ai_enabled && direct_api_enabled,
+                    app,
+                ),
+            );
+
+        // Model input field (only visible when toggle is on)
+        if direct_api_enabled && is_any_ai_enabled {
+            let padding = Some(Coords {
+                top: 10.,
+                bottom: 10.,
+                left: 16.,
+                right: 16.,
+            });
+            let editor_style = UiComponentStyles {
+                padding,
+                background: Some(appearance.theme().surface_2().into()),
+                ..Default::default()
+            };
+
+            let label = Text::new_inline("Model ID", appearance.ui_font_family(), CONTENT_FONT_SIZE)
+                .with_color(styles::header_font_color(true, app).into())
+                .finish();
+
+            let input = appearance
+                .ui_builder()
+                .text_input(self.model_editor.clone())
+                .with_style(editor_style)
+                .build()
+                .finish();
+
+            column.add_child(
+                Flex::column()
+                    .with_spacing(8.)
+                    .with_child(label)
+                    .with_child(input)
+                    .finish(),
+            );
+        }
+
+        Container::new(column.finish())
+            .with_padding_bottom(15.)
+            .finish()
+    }
+}
+
 struct ApiKeysWidget {
     openai_api_key_editor: ViewHandle<EditorView>,
     anthropic_api_key_editor: ViewHandle<EditorView>,
     google_api_key_editor: ViewHandle<EditorView>,
+    // Custom base URL editors for direct API mode (OSS builds only).
+    // Created only in OSS channel builds; in other builds, a placeholder handle is used
+    // that is never rendered.
+    openai_base_url_editor: ViewHandle<EditorView>,
+    anthropic_base_url_editor: ViewHandle<EditorView>,
 
     can_use_warp_credits_with_byok: SwitchStateHandle,
     upgrade_highlight_index: HighlightedHyperlink,
+    is_oss: bool,
 }
 
 impl ApiKeysWidget {
@@ -5984,6 +6185,8 @@ impl ApiKeysWidget {
             openai: openai_key,
             anthropic: anthropic_key,
             google: google_key,
+            openai_base_url,
+            anthropic_base_url,
             ..
         } = ApiKeyManager::as_ref(ctx).keys().clone();
 
@@ -6072,13 +6275,69 @@ impl ApiKeysWidget {
             "AIzaSy..."
         );
 
+        // Base URL editors for direct API mode (OSS builds).
+        // These are not password-masked and have different placeholders.
+        // Editors are always created, but only populated and rendered for OSS builds.
+        let is_oss = warp_core::channel::ChannelState::channel() == warp_core::channel::Channel::Oss;
+        macro_rules! create_base_url_editor {
+            ($editor:ident, $url:ident, $set_func:ident, $placeholder:literal) => {
+                let $editor = ctx.add_typed_action_view(move |ctx| {
+                    let appearance = Appearance::handle(ctx).as_ref(ctx);
+                    let options = SingleLineEditorOptions {
+                        is_password: false,
+                        text: TextOptions {
+                            font_size_override: Some(appearance.ui_font_size()),
+                            font_family_override: Some(appearance.monospace_font_family()),
+                            text_colors_override: Some(TextColors {
+                                default_color: appearance.theme().active_ui_text_color(),
+                                disabled_color: appearance.theme().disabled_ui_text_color(),
+                                hint_color: appearance.theme().disabled_ui_text_color(),
+                            }),
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    };
+                    let mut editor = EditorView::single_line(options, ctx);
+                    editor.set_placeholder_text($placeholder, ctx);
+                    if is_oss {
+                        if let Some(url) = &$url {
+                            editor.set_buffer_text(url, ctx);
+                        }
+                    }
+                    editor
+                });
+                if is_oss {
+                    AISettingsPageView::update_editor_interaction_state(
+                        $editor.clone(),
+                        is_any_ai_enabled && is_byo_enabled,
+                        ctx,
+                    );
+                    ctx.subscribe_to_view(&$editor, |_, editor, event, ctx| {
+                        if matches!(event, EditorEvent::Blurred | EditorEvent::Enter) {
+                            let buffer_text = editor.as_ref(ctx).buffer_text(ctx);
+                            let url = buffer_text.is_empty().not().then_some(buffer_text);
+                            ApiKeyManager::handle(ctx).update(ctx, |model, ctx| {
+                                model.$set_func(url, ctx);
+                            });
+                        }
+                    });
+                }
+            };
+        }
+
+        create_base_url_editor!(openai_base_url_editor, openai_base_url, set_openai_base_url, "https://api.openai.com/v1");
+        create_base_url_editor!(anthropic_base_url_editor, anthropic_base_url, set_anthropic_base_url, "https://api.anthropic.com");
+
         Self {
             openai_api_key_editor,
             anthropic_api_key_editor,
             google_api_key_editor,
+            openai_base_url_editor,
+            anthropic_base_url_editor,
 
             can_use_warp_credits_with_byok: Default::default(),
             upgrade_highlight_index: Default::default(),
+            is_oss,
         }
     }
 
@@ -6165,6 +6424,24 @@ impl ApiKeysWidget {
             is_enabled,
             app,
         ));
+
+        // In OSS builds, show custom base URL fields for direct API access
+        if self.is_oss {
+            column.add_child(render_api_key_input(
+                appearance,
+                "OpenAI Base URL (for direct API mode)",
+                self.openai_base_url_editor.clone(),
+                is_enabled,
+                app,
+            ));
+            column.add_child(render_api_key_input(
+                appearance,
+                "Anthropic Base URL (for direct API mode)",
+                self.anthropic_base_url_editor.clone(),
+                is_enabled,
+                app,
+            ));
+        }
 
         // Show upgrade CTA if BYOK is not enabled
         if !is_byo_enabled {

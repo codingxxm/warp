@@ -22,6 +22,10 @@ pub struct ApiKeys {
     pub anthropic: Option<String>,
     pub openai: Option<String>,
     pub open_router: Option<String>,
+    /// Custom base URLs for direct API access (OSS builds).
+    /// When set, AI requests bypass Warp's server and go directly to these endpoints.
+    pub openai_base_url: Option<String>,
+    pub anthropic_base_url: Option<String>,
 }
 
 impl ApiKeys {
@@ -30,6 +34,11 @@ impl ApiKeys {
             || self.anthropic.is_some()
             || self.google.is_some()
             || self.open_router.is_some()
+    }
+
+    /// Whether any custom base URL is configured for direct API access.
+    pub fn has_custom_url(&self) -> bool {
+        self.openai_base_url.is_some() || self.anthropic_base_url.is_some()
     }
 }
 
@@ -89,6 +98,18 @@ impl ApiKeyManager {
 
     pub fn set_open_router_key(&mut self, key: Option<String>, ctx: &mut ModelContext<Self>) {
         self.keys.open_router = key;
+        ctx.emit(ApiKeyManagerEvent::KeysUpdated);
+        self.write_keys_to_secure_storage(ctx);
+    }
+
+    pub fn set_openai_base_url(&mut self, url: Option<String>, ctx: &mut ModelContext<Self>) {
+        self.keys.openai_base_url = url;
+        ctx.emit(ApiKeyManagerEvent::KeysUpdated);
+        self.write_keys_to_secure_storage(ctx);
+    }
+
+    pub fn set_anthropic_base_url(&mut self, url: Option<String>, ctx: &mut ModelContext<Self>) {
+        self.keys.anthropic_base_url = url;
         ctx.emit(ApiKeyManagerEvent::KeysUpdated);
         self.write_keys_to_secure_storage(ctx);
     }

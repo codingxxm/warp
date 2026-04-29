@@ -1459,6 +1459,26 @@ define_settings_group!(AISettings, settings: [
         private: false,
         toml_path: "agents.warp_agent.other.agent_attribution_enabled",
         description: "Whether the Warp Agent adds an attribution co-author line to commit messages and pull requests it creates.",
+    },
+    // When enabled in OSS builds, AI requests bypass Warp's server and go directly
+    // to the configured AI provider endpoint. Requires a custom base URL to be set.
+    direct_api_enabled: DirectApiEnabled {
+        type: bool,
+        default: false,
+        supported_platforms: SupportedPlatforms::ALL,
+        sync_to_cloud: SyncToCloud::Globally(RespectUserSyncSetting::No),
+        private: false,
+        toml_path: "agents.warp_agent.direct_api.enabled",
+        description: "When enabled in OSS builds, routes AI requests directly to the configured provider instead of Warp's server.",
+    },
+    direct_api_model: DirectApiModel {
+        type: String,
+        default: "".to_string(),
+        supported_platforms: SupportedPlatforms::ALL,
+        sync_to_cloud: SyncToCloud::Globally(RespectUserSyncSetting::No),
+        private: false,
+        toml_path: "agents.warp_agent.direct_api.model",
+        description: "The model ID to use for direct API calls (e.g. gpt-4o, claude-sonnet-4-20250514).",
     }
 ]);
 
@@ -1497,13 +1517,15 @@ impl AISettings {
     }
 
     pub fn is_any_ai_enabled(&self, app: &AppContext) -> bool {
-        // Disable AI for anonymous and logged-out users.
+        // Disable AI for anonymous and logged-out users on non-OSS channels.
+        // OSS builds allow AI without Warp account auth when using direct API.
+        let is_oss = warp_core::channel::ChannelState::channel() == warp_core::channel::Channel::Oss;
         let is_anonymous_or_logged_out = AuthStateProvider::as_ref(app)
             .get()
             .is_anonymous_or_logged_out();
 
         *self.is_any_ai_enabled
-            && !is_anonymous_or_logged_out
+            && (is_oss || !is_anonymous_or_logged_out)
             && !self.is_ai_disabled_due_to_remote_session_org_policy(app)
     }
 

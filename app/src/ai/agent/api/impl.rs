@@ -9,11 +9,19 @@ use crate::server::server_api::ServerApi;
 
 use super::{convert_to::convert_input, ConvertToAPITypeError, RequestParams, ResponseStream};
 
+use super::direct_routing;
+
 pub async fn generate_multi_agent_output(
     server_api: Arc<ServerApi>,
     mut params: RequestParams,
     cancellation_rx: futures::channel::oneshot::Receiver<()>,
 ) -> Result<ResponseStream, ConvertToAPITypeError> {
+    // If direct routing is configured (OSS + direct_api_enabled + custom base URL),
+    // bypass Warp's server and call the LLM provider directly.
+    if let Some((provider_type, provider_config)) = params.direct_provider.take() {
+        return generate_direct_output(provider_type, provider_config, params, cancellation_rx).await;
+    }
+
     let supported_tools = params
         .supported_tools_override
         .take()
@@ -246,6 +254,66 @@ fn get_supported_cli_agent_tools(params: &RequestParams) -> Vec<api::ToolType> {
     }
 
     supported_cli_agent_tools
+}
+
+async fn generate_direct_output(
+    provider_type: direct_llm_client::types::ProviderType,
+    provider_config: direct_llm_client::types::ProviderConfig,
+    params: RequestParams,
+    cancellation_rx: futures::channel::oneshot::Receiver<()>,
+) -> Result<ResponseStream, ConvertToAPITypeError> {
+    use direct_llm_client::types::{ChatMessage, MessageRole};
+
+    let supported_tools = params
+        .supported_tools_override
+        .as_ref()
+        .cloned()
+        .unwrap_or_else(|| get_supported_tools(&params));
+
+    // Build system prompt
+    let system_prompt = direct_routing::build_system_prompt(&params);
+    let system_message = ChatMessage {
+        role: MessageRole::System,
+        content: system_prompt,
+        tool_calls: None,
+        tool_call_id: None,
+        name: None,
+    };
+
+    // Convert conversation history and new input to chat messages
+    let mut chat_messages = vec![system_message];
+    chat_messages.extend(direct_routing::convert_input_to_chat_messages(&params.input, &params.tasks));
+
+    // Convert supported tools to provider tool definitions
+    let tool_definitions = direct_routing::convert_supported_tools_to_tool_definitions(&supported_tools);
+
+    // Get stream context (task_id and conversation_id)
+    let stream_context = direct_routing::get_stream_context(&params);
+
+    let client = direct_llm_client::DirectLlmClient::new();
+
+    let result = client
+        .chat_stream(provider_type, &provider_config, &chat_messages, &tool_definitions, &stream_context)
+        .await;
+
+    match result {
+        Ok(direct_stream) => {
+            // Convert DirectLlmError stream to AIApiError stream
+            let converted_stream = direct_stream.map(|event_result| {
+                event_result.map_err(|direct_err| {
+                    Arc::new(direct_routing::direct_error_to_api_error(&*direct_err))
+                })
+            });
+            let output_stream = converted_stream.take_until(cancellation_rx);
+            Ok(Box::pin(output_stream))
+        }
+        Err(direct_err) => {
+            let api_err = direct_routing::direct_error_to_api_error(&direct_err);
+            let (tx, rx) = async_channel::unbounded();
+            let _ = tx.send(Err(Arc::new(api_err))).await;
+            Ok(Box::pin(rx))
+        }
+    }
 }
 
 #[cfg(test)]
