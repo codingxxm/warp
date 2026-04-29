@@ -296,9 +296,16 @@ impl AnthropicClient {
                         _ => None,
                     }
                 }
-                Err(e) => Some(Err(DirectLlmError::Other(format!(
-                    "SSE stream error: {e}"
-                )))),
+                Err(e) => {
+                    if matches!(e, reqwest_eventsource::Error::StreamEnded) {
+                        // Stream ended without proper termination — treat as completion
+                        Some(Ok(AnthropicStreamEvent::MessageEnd {
+                            stop_reason: "end_turn".to_string(),
+                        }))
+                    } else {
+                        Some(Err(DirectLlmError::from(e)))
+                    }
+                },
             }
         });
 

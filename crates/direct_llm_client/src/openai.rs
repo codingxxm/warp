@@ -252,9 +252,16 @@ impl OpenAiClient {
 
                     None // Empty delta, skip
                 }
-                Err(e) => Some(Err(DirectLlmError::Other(format!(
-                    "SSE stream error: {e}"
-                )))),
+                Err(e) => {
+                    // StreamEnded from reqwest_eventsource means the connection closed.
+                    // This can happen when the provider finishes the response without
+                    // proper SSE termination. Treat it as completion rather than an error.
+                    if matches!(e, reqwest_eventsource::Error::StreamEnded) {
+                        Some(Ok(OpenAiStreamEvent::Done))
+                    } else {
+                        Some(Err(DirectLlmError::from(e)))
+                    }
+                },
             }
         });
 

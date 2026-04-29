@@ -119,13 +119,37 @@ impl AdapterState {
             return Vec::new();
         }
         self.has_emitted_init = true;
-        vec![api::ResponseEvent {
+
+        let mut events = Vec::new();
+
+        // StreamInit event
+        events.push(api::ResponseEvent {
             r#type: Some(re::Type::Init(re::StreamInit {
                 conversation_id: self.conversation_id.clone(),
                 request_id: self.request_id.clone(),
                 run_id: String::new(),
             })),
-        }]
+        });
+
+        // CreateTask action — the conversation model requires this before AddMessagesToTask
+        events.push(api::ResponseEvent {
+            r#type: Some(re::Type::ClientActions(re::ClientActions {
+                actions: vec![api::ClientAction {
+                    action: Some(ca::Action::CreateTask(ca::CreateTask {
+                        task: Some(api::Task {
+                            id: self.task_id.clone(),
+                            description: String::new(),
+                            dependencies: None,
+                            messages: Vec::new(),
+                            summary: String::new(),
+                            server_data: String::new(),
+                        }),
+                    })),
+                }],
+            })),
+        });
+
+        events
     }
 }
 

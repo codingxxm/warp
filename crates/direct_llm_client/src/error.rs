@@ -59,3 +59,23 @@ impl From<reqwest::Error> for DirectLlmError {
         DirectLlmError::Transport(err.to_string())
     }
 }
+
+impl From<reqwest_eventsource::Error> for DirectLlmError {
+    fn from(err: reqwest_eventsource::Error) -> Self {
+        match err {
+            reqwest_eventsource::Error::InvalidStatusCode(status, _) => {
+                DirectLlmError::from_reqwest_status(status, String::new(), "provider")
+            }
+            reqwest_eventsource::Error::InvalidContentType(_, _) => {
+                DirectLlmError::Other("Server returned non-SSE content type. The endpoint may not support streaming.".to_string())
+            }
+            reqwest_eventsource::Error::StreamEnded => {
+                DirectLlmError::StreamEndedUnexpectedly
+            }
+            reqwest_eventsource::Error::Transport(e) => {
+                DirectLlmError::Transport(e.to_string())
+            }
+            _ => DirectLlmError::Other(format!("SSE error: {err}")),
+        }
+    }
+}
