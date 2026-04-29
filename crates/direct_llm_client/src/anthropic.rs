@@ -25,6 +25,8 @@ enum AnthropicContentBlock {
         name: String,
         input: serde_json::Value,
     },
+    #[serde(rename = "thinking")]
+    Thinking { thinking: String },
 }
 
 #[derive(Debug, Deserialize)]
@@ -44,6 +46,8 @@ enum AnthropicContentBlockStartInner {
         name: String,
         input: Option<serde_json::Value>,
     },
+    #[serde(rename = "thinking")]
+    Thinking { thinking: Option<String> },
 }
 
 #[derive(Debug, Deserialize)]
@@ -59,6 +63,8 @@ enum AnthropicContentBlockDeltaInner {
     TextDelta { text: String },
     #[serde(rename = "input_json_delta")]
     InputJsonDelta { partial_json: String },
+    #[serde(rename = "thinking_delta")]
+    ThinkingDelta { thinking: String },
 }
 
 #[derive(Debug, Clone)]
@@ -236,6 +242,7 @@ impl AnthropicClient {
                                                 name,
                                             }))
                                         }
+                                        AnthropicContentBlockStartInner::Thinking { .. } => None,
                                     }
                                 }
                                 Err(e) => Some(Err(DirectLlmError::ParseError(format!(
@@ -257,6 +264,7 @@ impl AnthropicClient {
                                                 partial_json,
                                             }))
                                         }
+                                        AnthropicContentBlockDeltaInner::ThinkingDelta { .. } => None,
                                     }
                                 }
                                 Err(e) => Some(Err(DirectLlmError::ParseError(format!(
@@ -361,6 +369,7 @@ impl AnthropicClient {
                             arguments: input.to_string(),
                         });
                     }
+                    AnthropicContentBlock::Thinking { .. } => {}
                 }
             }
         }
