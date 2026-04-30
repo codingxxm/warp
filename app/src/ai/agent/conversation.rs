@@ -1497,8 +1497,10 @@ impl AIConversation {
         ctx: &mut ModelContext<BlocklistAIHistoryModel>,
     ) -> Result<(), UpdateConversationError> {
         let Some(new_exchanges) = self.added_exchanges_by_response.get(stream_id).cloned() else {
+            log::error!("initialize_output: No added_exchanges for stream_id={:?}, task_store_root={}", stream_id, self.task_store.root_task_id());
             return Err(UpdateConversationError::NoPendingRequest);
         };
+        log::info!("initialize_output: stream_id={:?}, exchanges={}, root_task_id={}", stream_id, new_exchanges.len(), self.task_store.root_task_id());
 
         let request_id = init_event.request_id.clone();
         for new_exchange_info in new_exchanges.iter() {
@@ -2166,33 +2168,62 @@ impl AIConversation {
                     }
                 } else {
                     let root_task_id = self.task_store.root_task_id().clone();
-                    if let Some(mut root_task) = self.task_store.remove(&root_task_id) {
+                    if let Some(root_task) = self.task_store.remove(&root_task_id) {
                         let old_id = root_task.id().clone();
-                        root_task = root_task.into_server_created_task(
-                            task,
+                        let exchanges: Vec<AIAgentExchange> = root_task.exchanges().into_iter().cloned().collect();
+                        match root_task.into_server_created_task(
+                            task.clone(),
                             None,
                             self.todo_lists.last(),
                             self.code_review.as_ref(),
-                        )?;
-                        ctx.emit(BlocklistAIHistoryEvent::UpgradedTask {
-                            optimistic_id: old_id,
-                            server_id: root_task.id().clone(),
-                            terminal_view_id,
-                        });
+                        ) {
+                            Ok(upgraded_task) => {
+                                ctx.emit(BlocklistAIHistoryEvent::UpgradedTask {
+                                    optimistic_id: old_id,
+                                    server_id: upgraded_task.id().clone(),
+                                    terminal_view_id,
+                                });
 
-                        for AddedExchange {
-                            ref mut task_id, ..
-                        } in self
-                            .added_exchanges_by_response
-                            .get_mut(response_stream_id)
-                            .ok_or(UpdateConversationError::NoPendingRequest)?
-                            .iter_mut()
-                        {
-                            if *task_id == root_task_id {
-                                *task_id = root_task.id().clone();
+                                for AddedExchange {
+                                    ref mut task_id, ..
+                                } in self
+                                    .added_exchanges_by_response
+                                    .get_mut(response_stream_id)
+                                    .ok_or(UpdateConversationError::NoPendingRequest)?
+                                    .iter_mut()
+                                {
+                                    if *task_id == root_task_id {
+                                        *task_id = upgraded_task.id().clone();
+                                    }
+                                }
+                                self.task_store.set_root_task(upgraded_task);
                             }
+                            Err(UpgradeOptimisticTaskError::UnexpectedUpgrade) => {
+                                // Root task is already server-backed (e.g. from a previous
+                                // direct API request). Re-create a restored root with the
+                                // new server task's source data to keep the exchange refs intact.
+                                log::info!("UnexpectedUpgrade: root_task_id={}, replacing with api task_id={}", root_task_id, task.id);
+                                let restored = Task::new_restored_root(
+                                    task,
+                                    exchanges.into_iter(),
+                                );
+                                // Update added_exchanges_by_response if task_id changed
+                                for AddedExchange {
+                                    ref mut task_id, ..
+                                } in self
+                                    .added_exchanges_by_response
+                                    .get_mut(response_stream_id)
+                                    .ok_or(UpdateConversationError::NoPendingRequest)?
+                                    .iter_mut()
+                                {
+                                    if *task_id == root_task_id {
+                                        *task_id = restored.id().clone();
+                                    }
+                                }
+                                self.task_store.set_root_task(restored);
+                            }
+                            Err(e) => return Err(UpdateConversationError::UpgradeOptimisticTask(e)),
                         }
-                        self.task_store.set_root_task(root_task);
                     }
                 }
             }
@@ -2370,7 +2401,7 @@ impl AIConversation {
                 };
 
                 let current_comment_state = self.code_review.as_ref().cloned();
-                task.add_messages(
+                let add_result = task.add_messages(
                     messages,
                     exchange_id,
                     current_todo_list.as_ref(),
@@ -2381,9 +2412,17 @@ impl AIConversation {
                     // to mimic the normal conversation flow. (If this is not a shared session, the
                     // exchange inputs will already be populated).
                     self.is_viewing_shared_session,
-                )?;
+                );
 
+                // Always re-insert the task even if add_messages failed, so it's
+                // not lost from the task_store. Propagate the error only after
+                // ensuring the task is back in the store.
+                if let Err(e) = &add_result {
+                    log::warn!("AddMessagesToTask: add_messages failed ({}) for task_id={}", e, task_id);
+                }
                 self.task_store.insert(task);
+
+                add_result?;
                 if !added_exchanges
                     .iter()
                     .any(|new_exchange_info| new_exchange_info.exchange_id == exchange_id)

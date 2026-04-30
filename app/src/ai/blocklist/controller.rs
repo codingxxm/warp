@@ -1720,6 +1720,7 @@ impl BlocklistAIController {
                     .cloned(),
                 ambient_agent_task_id: self.ambient_agent_task_id,
                 existing_suggestions: None,
+                root_task_id: Some(conversation.get_root_task_id().to_string()),
             };
             (conversation_id, task_id, conversation_data)
         } else if !matches!(
@@ -1736,6 +1737,7 @@ impl BlocklistAIController {
                 forked_from_conversation_token: None,
                 ambient_agent_task_id: self.ambient_agent_task_id,
                 existing_suggestions: None,
+                root_task_id: None, // No root task yet for new conversation
             };
             (conversation_id, task_id, conversation_data)
         } else {
@@ -1904,6 +1906,7 @@ impl BlocklistAIController {
             active_tasks,
             parent_agent_id,
             agent_name,
+            root_task_id,
         ) = {
             let Some(conversation) = history_model
                 .as_ref(ctx)
@@ -1926,6 +1929,7 @@ impl BlocklistAIController {
                 active_tasks,
                 conversation.parent_agent_id().map(str::to_string),
                 conversation.agent_name().map(str::to_string),
+                Some(conversation.get_root_task_id().to_string()),
             )
         };
 
@@ -1973,6 +1977,7 @@ impl BlocklistAIController {
                 .as_ref(ctx)
                 .existing_suggestions_for_conversation(conversation_id)
                 .cloned(),
+            root_task_id,
         };
 
         // Log an error if tool call results do not have corresponding tool calls in task context
@@ -2269,6 +2274,7 @@ impl BlocklistAIController {
                         };
                         match event {
                             warp_multi_agent_api::response_event::Type::Init(init_event) => {
+                                log::info!("ResponseEvent: StreamInit received for conv_id={}, stream_id={:?}", init_event.conversation_id, stream_id);
                                 history_model.update(ctx, |history_model, ctx| {
                                     history_model.initialize_output_for_response_stream(
                                         &stream_id,
@@ -2292,6 +2298,7 @@ impl BlocklistAIController {
                             warp_multi_agent_api::response_event::Type::Finished(
                                 finished_event,
                             ) => {
+                                log::info!("ResponseEvent: StreamFinished received for conv_id={}, stream_id={:?}", conversation_id, stream_id);
                                 self.handle_response_stream_finished(
                                     &stream_id,
                                     finished_event,
@@ -2302,6 +2309,7 @@ impl BlocklistAIController {
                             }
                             warp_multi_agent_api::response_event::Type::ClientActions(actions) => {
                                 let client_actions = actions.actions;
+                                log::info!("ResponseEvent: ClientActions received, count={}, conv_id={}", client_actions.len(), conversation_id);
                                 let apply_result =
                                     history_model.update(ctx, |history_model, ctx| {
                                         history_model.apply_client_actions(

@@ -19,8 +19,10 @@ pub async fn generate_multi_agent_output(
     // If direct routing is configured (OSS + direct_api_enabled + custom base URL),
     // bypass Warp's server and call the LLM provider directly.
     if let Some((provider_type, provider_config)) = params.direct_provider.take() {
+        log::info!("generate_multi_agent_output: routing via DIRECT API (provider_type={:?}, model={})", provider_type, provider_config.model);
         return generate_direct_output(provider_type, provider_config, params, cancellation_rx).await;
     }
+    log::info!("generate_multi_agent_output: routing via Warp SERVER (direct_provider is None)");
 
     let supported_tools = params
         .supported_tools_override

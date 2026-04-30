@@ -34,6 +34,7 @@ struct OpenAiFunction {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct OpenAiStreamDelta {
     role: Option<String>,
     content: Option<String>,
@@ -183,9 +184,14 @@ impl OpenAiClient {
 
         let stream = event_source.filter_map(|result| async move {
             match result {
-                Ok(Event::Open) => None,
+                Ok(Event::Open) => {
+                    log::info!("DirectLLM: OpenAI SSE connection opened");
+                    None
+                }
                 Ok(Event::Message(message)) => {
+                    log::info!("DirectLLM: OpenAI SSE data: {}", message.data.chars().take(200).collect::<String>());
                     if message.data == "[DONE]" {
+                        log::info!("DirectLLM: OpenAI SSE [DONE] received");
                         return Some(Ok(OpenAiStreamEvent::Done));
                     }
 
@@ -257,8 +263,10 @@ impl OpenAiClient {
                     // This can happen when the provider finishes the response without
                     // proper SSE termination. Treat it as completion rather than an error.
                     if matches!(e, reqwest_eventsource::Error::StreamEnded) {
+                        log::info!("DirectLLM: OpenAI SSE StreamEnded (connection closed normally)");
                         Some(Ok(OpenAiStreamEvent::Done))
                     } else {
+                        log::warn!("DirectLLM: OpenAI SSE error: {:?}", e);
                         Some(Err(DirectLlmError::from(e)))
                     }
                 },

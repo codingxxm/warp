@@ -590,6 +590,9 @@ fn should_generate_unit_test_suggestion(
 }
 
 fn passive_code_diffs_enabled(ctx: &ModelContext<PassiveSuggestionsModel>) -> bool {
+    if *AISettings::as_ref(ctx).direct_api_enabled {
+        return false;
+    }
     let ai_settings = AISettings::as_ref(ctx);
     let is_prompt_suggestions_enabled = ai_settings.is_prompt_suggestions_enabled(ctx);
     let is_code_suggestions_enabled = ai_settings.is_code_suggestions_enabled(ctx);

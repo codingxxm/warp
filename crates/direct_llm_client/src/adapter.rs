@@ -27,28 +27,62 @@ pub fn from_openai_stream(
     tokio::spawn(async move {
         let mut state = state;
         let mut stream = stream;
+        let mut event_count = 0u32;
+
+        log::info!("DirectLLM: OpenAI adapter tokio task started");
 
         while let Some(item) = stream.next().await {
+            event_count += 1;
             match item {
                 Err(e) => {
+                    log::warn!("DirectLLM: OpenAI stream error after {} events: {}", event_count, e);
                     let _ = sender.unbounded_send(Err(Arc::new(e)));
                     break;
                 }
                 Ok(event) => {
+                    log::info!("DirectLLM: OpenAI raw event #{}: {:?}", event_count, event);
                     let events = convert_openai_event(event, &mut state);
+                    for ev in &events {
+                        match &ev.r#type {
+                            Some(re::Type::Init(init)) => log::info!("DirectLLM: → StreamInit conv_id={}", init.conversation_id),
+                            Some(re::Type::Finished(_)) => log::info!("DirectLLM: → StreamFinished"),
+                            Some(re::Type::ClientActions(ca)) => {
+                                for action in &ca.actions {
+                                    match &action.action {
+                                        Some(ca::Action::CreateTask(ct)) => log::info!("DirectLLM: → CreateTask task_id={}", ct.task.as_ref().map_or("None", |t| &t.id)),
+                                        Some(ca::Action::AddMessagesToTask(am)) => log::info!("DirectLLM: → AddMessagesToTask task_id={}, msgs={}", am.task_id, am.messages.len()),
+                                        Some(ca::Action::AppendToMessageContent(ap)) => log::info!("DirectLLM: → AppendToMessageContent task_id={}", ap.task_id),
+                                        other => log::info!("DirectLLM: → other action: {:?}", other),
+                                    }
+                                }
+                            }
+                            None => {}
+                        }
+                    }
                     for ev in events {
                         if sender.unbounded_send(Ok(ev)).is_err() {
+                            log::warn!("DirectLLM: OpenAI sender closed, breaking send loop");
                             break;
                         }
+                    }
+                    // Stop processing after StreamFinished — the stream is complete.
+                    if state.has_emitted_finished {
+                        log::info!("DirectLLM: OpenAI adapter breaking after StreamFinished ({} events processed)", event_count);
+                        break;
                     }
                 }
             }
         }
 
+        log::info!("DirectLLM: OpenAI adapter tokio task exiting, has_emitted_finished={}, events={}", state.has_emitted_finished, event_count);
+
         if !state.has_emitted_finished {
-            let _ = sender.unbounded_send(Ok(make_stream_finished(
+            log::info!("DirectLLM: OpenAI adapter sending fallback StreamFinished");
+            if sender.unbounded_send(Ok(make_stream_finished(
                 sf::Reason::Done(sf::Done {}),
-            )));
+            ))).is_err() {
+                log::warn!("DirectLLM: OpenAI fallback StreamFinished send failed (receiver dropped)");
+            }
         }
     });
 
@@ -65,28 +99,62 @@ pub fn from_anthropic_stream(
     tokio::spawn(async move {
         let mut state = state;
         let mut stream = stream;
+        let mut event_count = 0u32;
+
+        log::info!("DirectLLM: Anthropic adapter tokio task started");
 
         while let Some(item) = stream.next().await {
+            event_count += 1;
             match item {
                 Err(e) => {
+                    log::warn!("DirectLLM: Anthropic stream error after {} events: {}", event_count, e);
                     let _ = sender.unbounded_send(Err(Arc::new(e)));
                     break;
                 }
                 Ok(event) => {
+                    log::info!("DirectLLM: Anthropic raw event #{}: {:?}", event_count, event);
                     let events = convert_anthropic_event(event, &mut state);
+                    for ev in &events {
+                        match &ev.r#type {
+                            Some(re::Type::Init(init)) => log::info!("DirectLLM: → StreamInit conv_id={}", init.conversation_id),
+                            Some(re::Type::Finished(_)) => log::info!("DirectLLM: → StreamFinished"),
+                            Some(re::Type::ClientActions(ca)) => {
+                                for action in &ca.actions {
+                                    match &action.action {
+                                        Some(ca::Action::CreateTask(ct)) => log::info!("DirectLLM: → CreateTask task_id={}", ct.task.as_ref().map_or("None", |t| &t.id)),
+                                        Some(ca::Action::AddMessagesToTask(am)) => log::info!("DirectLLM: → AddMessagesToTask task_id={}, msgs={}", am.task_id, am.messages.len()),
+                                        Some(ca::Action::AppendToMessageContent(ap)) => log::info!("DirectLLM: → AppendToMessageContent task_id={}", ap.task_id),
+                                        other => log::info!("DirectLLM: → other action: {:?}", other),
+                                    }
+                                }
+                            }
+                            None => {}
+                        }
+                    }
                     for ev in events {
                         if sender.unbounded_send(Ok(ev)).is_err() {
+                            log::warn!("DirectLLM: Anthropic sender closed, breaking send loop");
                             break;
                         }
+                    }
+                    // Stop processing after StreamFinished — the stream is complete.
+                    if state.has_emitted_finished {
+                        log::info!("DirectLLM: Anthropic adapter breaking after StreamFinished ({} events processed)", event_count);
+                        break;
                     }
                 }
             }
         }
 
+        log::info!("DirectLLM: Anthropic adapter tokio task exiting, has_emitted_finished={}, events={}", state.has_emitted_finished, event_count);
+
         if !state.has_emitted_finished {
-            let _ = sender.unbounded_send(Ok(make_stream_finished(
+            log::info!("DirectLLM: Anthropic adapter sending fallback StreamFinished");
+            if sender.unbounded_send(Ok(make_stream_finished(
                 sf::Reason::Done(sf::Done {}),
-            )));
+            ))).is_err() {
+                log::warn!("DirectLLM: Anthropic fallback StreamFinished send failed (receiver dropped)");
+            }
         }
     });
 
@@ -131,7 +199,9 @@ impl AdapterState {
             })),
         });
 
-        // CreateTask action — the conversation model requires this before AddMessagesToTask
+        // CreateTask — use the conversation model's root task ID so that
+        // into_server_created_task upgrades the optimistic root to our task_id.
+        // The conversation model requires this before AddMessagesToTask can work.
         events.push(api::ResponseEvent {
             r#type: Some(re::Type::ClientActions(re::ClientActions {
                 actions: vec![api::ClientAction {

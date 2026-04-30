@@ -816,11 +816,17 @@ fn classify_edit_format(file_edits: &[FileEdit]) -> RequestFileEditsFormatKind {
 }
 
 fn is_passive_code_diffs_enabled(ctx: &ModelContext<PassiveSuggestionsModel>) -> bool {
+    if *AISettings::as_ref(ctx).direct_api_enabled {
+        return false;
+    }
     AISettings::as_ref(ctx).is_code_suggestions_enabled(ctx)
         && UserWorkspaces::as_ref(ctx).is_code_suggestions_toggleable()
 }
 
 fn is_prompt_suggestions_enabled(ctx: &ModelContext<PassiveSuggestionsModel>) -> bool {
+    if *AISettings::as_ref(ctx).direct_api_enabled {
+        return false;
+    }
     AISettings::as_ref(ctx).is_prompt_suggestions_enabled(ctx)
         && UserWorkspaces::as_ref(ctx).is_prompt_suggestions_toggleable()
 }

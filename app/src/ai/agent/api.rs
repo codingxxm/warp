@@ -133,6 +133,9 @@ pub struct RequestParams {
     /// Direct LLM provider config for OSS builds that bypass Warp's server.
     /// When set, AI requests go directly to the configured provider.
     pub direct_provider: Option<(direct_llm_client::types::ProviderType, direct_llm_client::types::ProviderConfig)>,
+    /// Root task ID from the conversation model, used by direct API mode to
+    /// address AddMessagesToTask actions to the correct task.
+    pub root_task_id: Option<String>,
 }
 
 pub type Event = Result<warp_multi_agent_api::ResponseEvent, Arc<AIApiError>>;
@@ -154,6 +157,7 @@ pub struct ConversationData {
     pub forked_from_conversation_token: Option<ServerConversationToken>,
     pub ambient_agent_task_id: Option<AmbientAgentTaskId>,
     pub existing_suggestions: Option<Suggestions>,
+    pub root_task_id: Option<String>,
 }
 
 impl RequestParams {
@@ -323,6 +327,7 @@ impl RequestParams {
             parent_agent_id: None,
             agent_name: None,
             direct_provider,
+            root_task_id: conversation.root_task_id,
         }
     }
 }

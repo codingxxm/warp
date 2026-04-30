@@ -6,6 +6,7 @@ use crate::error::DirectLlmError;
 use crate::types::{ChatMessage, MessageRole, ProviderConfig, ProviderToolCall, ToolDefinition};
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct AnthropicStreamMessage {
     id: Option<String>,
     model: Option<String>,
@@ -15,6 +16,7 @@ struct AnthropicStreamMessage {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 #[serde(tag = "type")]
 enum AnthropicContentBlock {
     #[serde(rename = "text")]
@@ -36,6 +38,7 @@ struct AnthropicContentBlockStart {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 #[serde(tag = "type")]
 enum AnthropicContentBlockStartInner {
     #[serde(rename = "text")]
@@ -48,6 +51,8 @@ enum AnthropicContentBlockStartInner {
     },
     #[serde(rename = "thinking")]
     Thinking { thinking: Option<String> },
+    #[serde(rename = "signature")]
+    Signature { signature: Option<String> },
 }
 
 #[derive(Debug, Deserialize)]
@@ -57,6 +62,7 @@ struct AnthropicContentBlockDelta {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 #[serde(tag = "type")]
 enum AnthropicContentBlockDeltaInner {
     #[serde(rename = "text_delta")]
@@ -65,6 +71,8 @@ enum AnthropicContentBlockDeltaInner {
     InputJsonDelta { partial_json: String },
     #[serde(rename = "thinking_delta")]
     ThinkingDelta { thinking: String },
+    #[serde(rename = "signature_delta")]
+    SignatureDelta { signature: String },
 }
 
 #[derive(Debug, Clone)]
@@ -243,6 +251,7 @@ impl AnthropicClient {
                                             }))
                                         }
                                         AnthropicContentBlockStartInner::Thinking { .. } => None,
+                                        AnthropicContentBlockStartInner::Signature { .. } => None,
                                     }
                                 }
                                 Err(e) => Some(Err(DirectLlmError::ParseError(format!(
@@ -265,6 +274,7 @@ impl AnthropicClient {
                                             }))
                                         }
                                         AnthropicContentBlockDeltaInner::ThinkingDelta { .. } => None,
+                                        AnthropicContentBlockDeltaInner::SignatureDelta { .. } => None,
                                     }
                                 }
                                 Err(e) => Some(Err(DirectLlmError::ParseError(format!(

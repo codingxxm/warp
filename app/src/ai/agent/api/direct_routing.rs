@@ -521,14 +521,24 @@ pub fn build_system_prompt(params: &super::RequestParams) -> String {
 
 /// Get the StreamContext (task_id and conversation_id) for a direct LLM call.
 pub fn get_stream_context(params: &super::RequestParams) -> StreamContext {
-    let task_id = params.tasks.first()
-        .map(|t| t.id.clone())
-        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    // Use the conversation model's root task ID if available.
+    // On first query the root is optimistic and compute_active_tasks() returns empty,
+    // so we rely on root_task_id from the controller instead of params.tasks.
+    let task_id = params.root_task_id.clone()
+        .unwrap_or_else(|| {
+            let id = uuid::Uuid::new_v4().to_string();
+            log::warn!("DirectLLM: no root_task_id, generating random task_id={}", id);
+            id
+        });
 
     let conversation_id = params.conversation_token
         .as_ref()
         .map(|t| t.as_str().to_string())
-        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        .unwrap_or_else(|| {
+            let id = uuid::Uuid::new_v4().to_string();
+            log::warn!("DirectLLM: no conversation_token, generating random conversation_id={}", id);
+            id
+        });
 
     StreamContext { task_id, conversation_id }
 }
