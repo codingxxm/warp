@@ -1295,6 +1295,9 @@ impl AgentInputFooter {
                 None
             }
             AgentToolbarItemKind::ShareSession => {
+                if *crate::settings::AISettings::as_ref(app).direct_api_enabled {
+                    return None;
+                }
                 let enabled = FeatureFlag::CreatingSharedSessions.is_enabled()
                     && FeatureFlag::HOARemoteControl.is_enabled()
                     && ContextFlag::CreateSharedSession.is_enabled();
@@ -1851,6 +1854,9 @@ impl AgentInputFooter {
                     .map(|chip| ChildView::new(chip).finish())
             }
             AgentToolbarItemKind::ModelSelector => {
+                if *crate::settings::AISettings::as_ref(app).direct_api_enabled {
+                    return None;
+                }
                 let show = FeatureFlag::ProfilesDesignRevamp.is_enabled()
                     || *SessionSettings::as_ref(app).show_model_selectors_in_prompt;
                 show.then(|| ChildView::new(&self.model_selector).finish())
@@ -1875,6 +1881,9 @@ impl AgentInputFooter {
                 has_conversation.then(|| ChildView::new(&self.context_window_button).finish())
             }
             AgentToolbarItemKind::ShareSession => {
+                if *crate::settings::AISettings::as_ref(app).direct_api_enabled {
+                    return None;
+                }
                 let enabled = FeatureFlag::CreatingSharedSessions.is_enabled()
                     && FeatureFlag::HOARemoteControl.is_enabled()
                     && ContextFlag::CreateSharedSession.is_enabled();
